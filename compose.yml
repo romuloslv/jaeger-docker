@@ -1,15 +1,19 @@
-
 version: "3.9"
 
 services:
   elasticsearch:
     image: docker.elastic.co/elasticsearch/elasticsearch:7.9.3
-    networks:
-      - elastic-jaeger
+    container_name: elasticsearch
+    hostname: elasticsearch
+    restart: on-failure
     ports:
       - "127.0.0.1:9200:9200"
       - "127.0.0.1:9300:9300"
-    restart: on-failure
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s http://localhost:9200/_cat/health?h=status | grep -q green"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
     environment:
       - cluster.name=jaeger-cluster
       - discovery.type=single-node
@@ -19,80 +23,113 @@ services:
       - xpack.security.enabled=false
     volumes:
       - esdata:/usr/share/elasticsearch/data
+    networks:
+      - elastic-jaeger
 
   jaeger-collector:
-    image: jaegertracing/jaeger-collector
+    image: jaegertracing/jaeger-collector:1.18
+    container_name: jaeger-collector
+    hostname: jaeger-collector
+    restart: on-failure
+    command: [
+      "--es.server-urls=http://elasticsearch:9200",
+      "--es.num-shards=1",
+      "--es.num-replicas=0",
+      "--log-level=debug"
+    ]
     ports:
       - "14269:14269"
       - "14268:14268"
       - "14267:14267"
       - "14250:14250"
       - "9411:9411"
-    networks:
-      - elastic-jaeger
-    restart: on-failure
+    # healthcheck:
+    #   test: ["CMD-SHELL", "curl -s http://localhost:14269 | grep -q available"]
+    #   interval: 10s
+    #   timeout: 10s
+    #   retries: 10
     environment:
       - SPAN_STORAGE_TYPE=elasticsearch
-    command: [
-      "--es.server-urls=http://elasticsearch:9200",
-      "--es.num-shards=1",
-      "--es.num-replicas=0",
-      "--log-level=error"
-    ]
     depends_on:
-      - elasticsearch
+      elasticsearch:
+        condition: service_healthy
+    networks:
+      - elastic-jaeger
 
   jaeger-agent:
-    image: jaegertracing/jaeger-agent
+    image: jaegertracing/jaeger-agent:1.18
+    container_name: jaeger-agent
     hostname: jaeger-agent
-    command: ["--reporter.grpc.host-port=jaeger-collector:14250"]
+    restart: on-failure
+    command: [
+      "--reporter.grpc.host-port=jaeger-collector:14250",
+      "--log-level=debug"
+    ]
     ports:
       - "5775:5775/udp"
       - "6831:6831/udp"
       - "6832:6832/udp"
       - "5778:5778"
+    # healthcheck:
+    #   test: ["CMD-SHELL", "curl -s http://localhost:5778/sampling?service=dummy >/dev/null"]
+    #   interval: 10s
+    #   timeout: 10s
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
     networks:
       - elastic-jaeger
-    restart: on-failure
-    environment:
-      - SPAN_STORAGE_TYPE=elasticsearch
-    depends_on:
-      - jaeger-collector
 
   jaeger-query:
-    image: jaegertracing/jaeger-query
-    environment:
-      - JAEGER_AGENT_HOST=jaeger-agent
-      - JAEGER_AGENT_PORT=6831
-      - SPAN_STORAGE_TYPE=elasticsearch
-      - no_proxy=localhost
-    ports:
-      - "16686:16686"
-      - "16687:16687"
-    networks:
-      - elastic-jaeger
+    image: jaegertracing/jaeger-query:1.18
+    container_name: jaeger-query
+    hostname: jaeger-query
     restart: on-failure
     command: [
       "--es.server-urls=http://elasticsearch:9200",
       "--span-storage.type=elasticsearch",
       "--log-level=debug"
     ]
+    ports:
+      - "16686:16686"
+      - "16687:16687"
+    # healthcheck:
+    #   test: ["CMD-SHELL", "curl -s http://localhost:16687 | grep -q available"]
+    #   interval: 10s
+    #   timeout: 10s
+    #   retries: 10
+    environment:
+      - JAEGER_AGENT_HOST=jaeger-agent
+      - JAEGER_AGENT_PORT=6831
+      - SPAN_STORAGE_TYPE=elasticsearch
+      - no_proxy=localhost
     depends_on:
-      - jaeger-agent
+      elasticsearch:
+        condition: service_healthy
+    networks:
+      - elastic-jaeger
 
   hotrod:
     image: jaegertracing/example-hotrod:latest
+    container_name: hotrod
+    hostname: hotrod
+    restart: on-failure
+    command: ["all"]
     ports: 
       - "8080:8080"
-    command: ["all"]
+    # healthcheck:
+    #   test: ["CMD-SHELL", "curl -so /dev/null http://localhost:8080"]
+    #   interval: 10s
+    #   timeout: 10s
+    #   retries: 10
     environment:
       - JAEGER_AGENT_HOST=jaeger-agent
       - JAEGER_AGENT_PORT=6831
       - OTEL_EXPORTER_JAEGER_ENDPOINT=http://jaeger-collector:14268/api/traces
-    networks:
-      - elastic-jaeger
     depends_on:
       - jaeger-agent
+    networks:
+      - elastic-jaeger
 
 volumes:
   esdata:
@@ -101,3 +138,5 @@ volumes:
 networks:
   elastic-jaeger:
     driver: bridge
+
+# healthchecks are disabled because they are not working, pkg curl is not installed
