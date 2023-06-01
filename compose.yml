@@ -62,6 +62,8 @@ services:
   jaeger-query:
     image: jaegertracing/jaeger-query
     environment:
+      - JAEGER_AGENT_HOST=jaeger-agent
+      - JAEGER_AGENT_PORT=6831
       - SPAN_STORAGE_TYPE=elasticsearch
       - no_proxy=localhost
     ports:
@@ -85,8 +87,8 @@ services:
     command: ["all"]
     environment:
       - JAEGER_AGENT_HOST=jaeger-agent
-      - OTEL_EXPORTER_JAEGER_ENDPOINT=http://jaeger-collector:14268/api/traces
       - JAEGER_AGENT_PORT=6831
+      - OTEL_EXPORTER_JAEGER_ENDPOINT=http://jaeger-collector:14268/api/traces
     networks:
       - elastic-jaeger
     depends_on:
